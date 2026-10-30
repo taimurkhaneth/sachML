@@ -50,16 +50,17 @@ function isAllowed(identity) {
   return Boolean(u);
 }
 
-function add({ number, chatId, name }) {
+function add({ number, chatId, name, admin }) {
   let u = find({ number, chatId });
   if (u) {
+    if (admin) u.admin = true;
     if (number && !u.number) u.number = number;
     if (chatId && !(u.chatIds || []).includes(chatId)) u.chatIds = [...(u.chatIds || []), chatId];
     if (name) u.name = name;
     save();
     return { user: u, isNew: false };
   }
-  u = { number: number || null, chatIds: chatId ? [chatId] : [], name: name || '', addedAt: new Date().toISOString() };
+  u = { number: number || null, chatIds: chatId ? [chatId] : [], name: name || '', admin: Boolean(admin), addedAt: new Date().toISOString() };
   state.users.push(u);
   save();
   return { user: u, isNew: true };
@@ -72,8 +73,9 @@ function remove({ number, chatId }) {
   return before - state.users.length;
 }
 
+const isAdmin = (identity) => Boolean(find(identity)?.admin);
 const list = () => state.users;
 const isPaused = () => Boolean(state.paused);
 function setPaused(v) { state.paused = Boolean(v); save(); }
 
-module.exports = { load, normalizeNumber, isAllowed, add, remove, list, isPaused, setPaused };
+module.exports = { load, normalizeNumber, isAllowed, isAdmin, add, remove, list, isPaused, setPaused };

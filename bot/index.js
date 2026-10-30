@@ -31,6 +31,9 @@ const MIN_WORDS_TO_CHECK = parseInt(process.env.MIN_WORDS_TO_CHECK || '12', 10);
 const COOLDOWN_MS = parseInt(process.env.COOLDOWN_SECONDS || '5', 10) * 1000;
 const MAX_AGE_SEC = parseInt(process.env.MAX_MESSAGE_AGE_MINUTES || '10', 10) * 60;
 const WATCHDOG_MS = 60 * 1000;
+const DEBUG = (process.env.DEBUG_MESSAGES || '1') === '1';
+const JOIN_CODE = (process.env.JOIN_CODE || '').trim();
+const ADMIN_CODE = (process.env.ADMIN_CODE || '').trim();
 const STARTED_AT = Date.now();
 
 const URL_RE = /(https?:\/\/\S+|www\.\S+)/i;
@@ -176,21 +179,28 @@ function isSelfChat(msg) {
 
 async function resolveIdentity(msg) {
   const chatId = chatOf(msg);
-  let number = chatId.endsWith('@c.us') ? chatId.split('@')[0] : null;
+  const user = (v) => (v ? String(v._serialized || v).split('@')[0] : null);
+  let number = chatId.endsWith('@c.us') ? user(chatId) : null;
+
+  // Newer WhatsApp hides numbers behind "@lid" ids. Try every way to get the real number.
   if (!number) {
+    const pn = msg._data?.senderPn || msg._data?.participantPn || msg._data?.from?.pn;
+    if (pn) number = user(pn);
+  }
+  if (!number && typeof client.getContactLidAndPhone === 'function') {
     try {
-      if (typeof client.getContactLidAndPhone === 'function') {
-        const [r] = await client.getContactLidAndPhone([chatId]);
-        if (r?.pn) number = String(r.pn).split('@')[0];
-      }
-    } catch { /* ignore */ }
+      const [r] = await client.getContactLidAndPhone([chatId]);
+      if (r?.pn) number = user(r.pn);
+    } catch { /* not available */ }
   }
   if (!number && !msg.fromMe) {
     try {
       const c = await msg.getContact();
-      if (c?.number) number = c.number;
+      if (c?.id?.server === 'c.us') number = c.id.user;
+      else if (c?.number && c.number !== user(chatId)) number = c.number;
     } catch { /* ignore */ }
   }
+  if (DEBUG) log.info(`  identity: chat ${log.mask(chatId)} -> number ${number ? log.mask(number) : 'unknown'}`);
   return { chatId, number };
 }
 
@@ -244,8 +254,6 @@ function runCheck(chatId, text, quoted) {
 }
 
 // ---------- messages ----------
-const DEBUG = (process.env.DEBUG_MESSAGES || '1') === '1';
-
 async function onMessage(msg, source) {
   if (DEBUG) {
     const b = (msg.body || '').trim();
@@ -291,7 +299,25 @@ async function onMessage(msg, source) {
 
     // ----- messages from other people -----
     const who = await resolveIdentity(msg);
-    const isAdmin = who.number && ADMIN_NUMBERS.includes(who.number);
+
+    // "join <code>": works even when WhatsApp hides the number behind an @lid id.
+    const join = text.match(/^!?join\s+(\S+)$/i);
+    if (join) {
+      const code = join[1];
+      if (ADMIN_CODE && code === ADMIN_CODE) {
+        allow.add({ number: who.number, chatId, admin: true });
+        log.info(`Admin joined: ${log.mask(chatId)}`);
+        return send(chatId, '✅ *Sach Check*\n\nYou are now an admin. Send *!help* to see commands.');
+      }
+      if (JOIN_CODE && code === JOIN_CODE) {
+        allow.add({ number: who.number, chatId });
+        log.info(`User joined: ${log.mask(chatId)}`);
+        return send(chatId, '✅ *Sach Check*\n\nخوش آمدید! اب کوئی بھی اردو خبر یا خبر کا لنک یہاں فارورڈ کریں، میں بتاؤں گا کہ یہ جعلی لگتی ہے یا نہیں۔\n_Welcome! Forward any Urdu news or news link here to check it._');
+      }
+      return;                                                               // wrong code: stay silent
+    }
+
+    const isAdmin = Boolean((who.number && ADMIN_NUMBERS.includes(who.number)) || allow.isAdmin(who));
 
     if (isAdmin && text.startsWith('!')) {
       const [cmd, ...args] = text.slice(1).trim().split(/\s+/);
