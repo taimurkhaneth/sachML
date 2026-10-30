@@ -177,6 +177,9 @@ function isSelfChat(msg) {
   return self;
 }
 
+// Never let a slow WhatsApp lookup block a reply.
+const withTimeout = (p, ms = 3000) => Promise.race([p, new Promise((res) => setTimeout(() => res(null), ms))]);
+
 async function resolveIdentity(msg) {
   const chatId = chatOf(msg);
   const user = (v) => (v ? String(v._serialized || v).split('@')[0] : null);
@@ -189,13 +192,14 @@ async function resolveIdentity(msg) {
   }
   if (!number && typeof client.getContactLidAndPhone === 'function') {
     try {
-      const [r] = await client.getContactLidAndPhone([chatId]);
+      const res = await withTimeout(client.getContactLidAndPhone([chatId]));
+      const r = Array.isArray(res) ? res[0] : null;
       if (r?.pn) number = user(r.pn);
     } catch { /* not available */ }
   }
   if (!number && !msg.fromMe) {
     try {
-      const c = await msg.getContact();
+      const c = await withTimeout(msg.getContact());
       if (c?.id?.server === 'c.us') number = c.id.user;
       else if (c?.number && c.number !== user(chatId)) number = c.number;
     } catch { /* ignore */ }
