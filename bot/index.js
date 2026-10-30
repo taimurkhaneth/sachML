@@ -177,6 +177,15 @@ function isSelfChat(msg) {
   return self;
 }
 
+// A stable id for a message, whatever shape this WhatsApp version gives us.
+function msgKey(msg) {
+  const i = msg.id;
+  if (typeof i === 'string') return i;
+  return i?._serialized || msg._data?.id?._serialized
+    || (i?.id ? `${i.fromMe}_${chatOf(msg)}_${i.id}` : null)
+    || `${msg.from}_${msg.timestamp}_${(msg.body || '').length}_${(msg.body || '').slice(0, 30)}`;
+}
+
 // Never let a slow WhatsApp lookup block a reply.
 const withTimeout = (p, ms = 3000) => Promise.race([p, new Promise((res) => setTimeout(() => res(null), ms))]);
 
@@ -226,7 +235,7 @@ async function send(chatId, content, options = {}) {
     const { quotedMessageId, ...rest } = options;            // retry once without the quote
     sent = await client.sendMessage(chatId, content, rest);
   }
-  if (sent?.id?._serialized) remember(sentByBot, sent.id._serialized);
+  if (sent) remember(sentByBot, msgKey(sent));
   return sent;
 }
 
@@ -237,7 +246,8 @@ function runCheck(chatId, text, quoted) {
       const chat = await client.getChatById(chatId).catch(() => null);
       chat?.sendStateTyping().catch(() => {});
       const r = await api.analyze(text.replace(CHECK_WORDS, ''));
-      const quote = quoted ? { quotedMessageId: quoted.id._serialized } : {};
+      const qid = quoted?.id?._serialized;
+      const quote = qid ? { quotedMessageId: qid } : {};
 
       if (r.status === 'ok') {
         const media = new MessageMedia('image/png', r.chart_png, 'sach-check.png');
@@ -266,8 +276,7 @@ async function onMessage(msg, source) {
   }
   try {
     const skip = (why) => { if (DEBUG && source === 'create') log.info(`  skipped: ${why}`); };
-    const id = msg.id?._serialized;
-    if (!id) return skip('no message id');
+    const id = msgKey(msg);
     if (processed.has(id) || sentByBot.has(id)) return;                    // already handled (silent)
     remember(processed, id);
 
