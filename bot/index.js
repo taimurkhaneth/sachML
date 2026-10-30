@@ -265,16 +265,20 @@ async function onMessage(msg, source) {
       `chat=${log.mask(chatOf(msg))} fwd=${Boolean(msg.isForwarded)} ${b.startsWith('!') ? 'cmd=' + b.slice(0, 20) : 'len=' + b.length}`);
   }
   try {
+    const skip = (why) => { if (DEBUG && source === 'create') log.info(`  skipped: ${why}`); };
     const id = msg.id?._serialized;
-    if (!id || processed.has(id) || sentByBot.has(id)) return;
+    if (!id) return skip('no message id');
+    if (processed.has(id) || sentByBot.has(id)) return;                    // already handled (silent)
     remember(processed, id);
 
     const chatId = chatOf(msg);
-    if (!chatId || isGroupOrBroadcast(chatId) || msg.isStatus) return;     // never groups or status
-    if (msg.timestamp && Date.now() / 1000 - msg.timestamp > MAX_AGE_SEC) return;  // old backlog
+    if (!chatId || isGroupOrBroadcast(chatId) || msg.isStatus) return skip('group/status');
+    const age = msg.timestamp ? Math.round(Date.now() / 1000 - msg.timestamp) : 0;
+    if (age > MAX_AGE_SEC) return skip(`old message (${age}s)`);
 
     const text = (msg.body || '').trim();
-    if (!text) return;                                                      // images without text, voice notes...
+    if (!text) return skip('no text');
+    if (DEBUG) log.info(`  handling ${msg.fromMe ? 'own' : 'incoming'} message (age ${age}s)`);
 
     // ----- messages written from this phone (the owner) -----
     if (msg.fromMe) {
@@ -318,7 +322,7 @@ async function onMessage(msg, source) {
         log.info(`User joined: ${log.mask(chatId)}`);
         return send(chatId, '✅ *Sach Check*\n\nخوش آمدید! اب کوئی بھی اردو خبر یا خبر کا لنک یہاں فارورڈ کریں، میں بتاؤں گا کہ یہ جعلی لگتی ہے یا نہیں۔\n_Welcome! Forward any Urdu news or news link here to check it._');
       }
-      return;                                                               // wrong code: stay silent
+      return skip('wrong join code');
     }
 
     const isAdmin = Boolean((who.number && ADMIN_NUMBERS.includes(who.number)) || allow.isAdmin(who));
@@ -331,13 +335,13 @@ async function onMessage(msg, source) {
       });
     }
 
-    if (allow.isPaused()) return;
-    if (!isAdmin && !allow.isAllowed(who)) return;                          // not on the list: stay silent
+    if (allow.isPaused()) return skip('paused');
+    if (!isAdmin && !allow.isAllowed(who)) return skip('not on the allow-list');
 
     if (/^(!?help|menu|مدد)$/i.test(text)) {
       return send(chatId, '🧪 *Sach Check*\n\nکوئی بھی اردو خبر یا خبر کا لنک یہاں فارورڈ کریں، میں بتاؤں گا کہ یہ جعلی لگتی ہے یا نہیں۔\n_Forward any Urdu news or news link here to check it._');
     }
-    if (!looksLikeNews(msg, text)) return;                                  // normal chat, not news
+    if (!looksLikeNews(msg, text)) return skip('normal chat, not news');
 
     const last = lastCheck.get(chatId) || 0;
     if (Date.now() - last < COOLDOWN_MS) return;
