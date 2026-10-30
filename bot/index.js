@@ -147,13 +147,30 @@ setInterval(async () => {
 const isGroupOrBroadcast = (id = '') =>
   id.endsWith('@g.us') || id.endsWith('@broadcast') || id.endsWith('@newsletter') || id === 'status@broadcast';
 
+let selfChatId = null;   // our own "Message yourself" chat id, learned from the first message there
+
+// The id of the chat a message belongs to (works for old @c.us and new @lid ids).
+function chatOf(msg) {
+  const r = msg.id?.remote;
+  return (typeof r === 'string' ? r : r?._serialized) || (msg.fromMe ? msg.to : msg.from);
+}
+
 function isSelfChat(msg) {
-  const to = msg.to || '';
-  return msg.fromMe && (to === myWid || (myLid && to === myLid) || to.split('@')[0] === myNumber);
+  if (!msg.fromMe) return false;
+  const to = msg.to || '', from = msg.from || '';
+  const user = (id) => String(id).split('@')[0];
+  const self = to === myWid || (myLid && to === myLid) || user(to) === myNumber
+    || (myLid && user(to) === user(myLid)) || (selfChatId && chatOf(msg) === selfChatId)
+    || user(to) === user(from);
+  if (self && !selfChatId) {
+    selfChatId = chatOf(msg);
+    log.info(`Own "Message yourself" chat is ${log.mask(selfChatId)}`);
+  }
+  return self;
 }
 
 async function resolveIdentity(msg) {
-  const chatId = msg.fromMe ? msg.to : msg.from;
+  const chatId = chatOf(msg);
   let number = chatId.endsWith('@c.us') ? chatId.split('@')[0] : null;
   if (!number) {
     try {
@@ -181,7 +198,15 @@ function looksLikeNews(msg, text) {
 }
 
 async function send(chatId, content, options = {}) {
-  const sent = await client.sendMessage(chatId, content, options);
+  let sent;
+  try {
+    sent = await client.sendMessage(chatId, content, options);
+  } catch (e) {
+    log.warn(`Send to ${log.mask(chatId)} failed: ${e.message}`);
+    if (!options.quotedMessageId) throw e;
+    const { quotedMessageId, ...rest } = options;            // retry once without the quote
+    sent = await client.sendMessage(chatId, content, rest);
+  }
   if (sent?.id?._serialized) remember(sentByBot, sent.id._serialized);
   return sent;
 }
@@ -220,7 +245,7 @@ client.on('message_create', async (msg) => {
     if (!id || processed.has(id) || sentByBot.has(id)) return;
     remember(processed, id);
 
-    const chatId = msg.fromMe ? msg.to : msg.from;
+    const chatId = chatOf(msg);
     if (!chatId || isGroupOrBroadcast(chatId) || msg.isStatus) return;     // never groups or status
     if (msg.timestamp && Date.now() / 1000 - msg.timestamp > MAX_AGE_SEC) return;  // old backlog
 
@@ -231,18 +256,24 @@ client.on('message_create', async (msg) => {
     if (msg.fromMe) {
       if (BOT_PREFIXES.some(p => text.startsWith(p))) return;              // our own replies
       const self = isSelfChat(msg);
+      const here = chatOf(msg);
       if (text.startsWith('!')) {
         const [cmd, ...args] = text.slice(1).trim().split(/\s+/);
-        const target = self ? null : await resolveIdentity(msg);
-        const respond = (t) => send(myWid, t);                              // answers go to "Message yourself"
+        log.info(`Owner command: !${cmd} (${self ? 'own chat' : 'in chat ' + log.mask(here)})`);
+        const target = self ? null : { ...(await resolveIdentity(msg)), chatId: here };
+        // Answers go to "Message yourself". If we don't know that chat yet, answer right here.
+        const respond = async (t) => {
+          const dest = self ? here : (selfChatId || myWid);
+          try { return await send(dest, t); } catch { return send(here, t); }
+        };
         return commands.handle(cmd.toLowerCase(), {
           args, isSelfChat: self,
           targetChatId: target?.chatId, targetNumber: target?.number,
-          respond, runCheck: (t) => runCheck(myWid, t),
+          respond, runCheck: (t) => runCheck(self ? here : (selfChatId || here), t),
           getState: () => client.getState(), startedAt: STARTED_AT,
         });
       }
-      if (self && looksLikeNews(msg, text)) return runCheck(myWid, text, msg);  // owner testing in own chat
+      if (self && looksLikeNews(msg, text)) return runCheck(here, text, msg);  // owner testing in own chat
       return;                                                               // owner chatting normally
     }
 
