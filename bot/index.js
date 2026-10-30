@@ -38,6 +38,11 @@ const BOT_PREFIXES = ['🧪', '🤖', '✅', '🗑️', '👥', '⏸️', '▶�
 const CHECK_WORDS = /^(check|چیک|sach check|سچ چیک)\b[:\s]*/i;
 
 allow.load();
+// Numbers allowed straight from .env (ALLOWED_NUMBERS=0300...,0311...), no command needed.
+for (const raw of (process.env.ALLOWED_NUMBERS || '').split(',')) {
+  const n = allow.normalizeNumber(raw);
+  if (n) allow.add({ number: n, chatId: `${n}@c.us` });
+}
 
 // ---------- WhatsApp client ----------
 const client = new Client({
@@ -239,7 +244,14 @@ function runCheck(chatId, text, quoted) {
 }
 
 // ---------- messages ----------
-client.on('message_create', async (msg) => {
+const DEBUG = (process.env.DEBUG_MESSAGES || '1') === '1';
+
+async function onMessage(msg, source) {
+  if (DEBUG) {
+    const b = (msg.body || '').trim();
+    log.info(`[${source}] fromMe=${msg.fromMe} type=${msg.type} from=${log.mask(msg.from)} to=${log.mask(msg.to)} ` +
+      `chat=${log.mask(chatOf(msg))} fwd=${Boolean(msg.isForwarded)} ${b.startsWith('!') ? 'cmd=' + b.slice(0, 20) : 'len=' + b.length}`);
+  }
   try {
     const id = msg.id?._serialized;
     if (!id || processed.has(id) || sentByBot.has(id)) return;
@@ -305,7 +317,12 @@ client.on('message_create', async (msg) => {
   } catch (e) {
     log.error('Message handler error:', e.message);
   }
-});
+}
+
+// Both events, because some WhatsApp versions only fire one of them.
+// The "processed" set makes sure each message is handled once.
+client.on('message_create', (msg) => onMessage(msg, 'create'));
+client.on('message', (msg) => onMessage(msg, 'in'));
 
 // ---------- start / stop ----------
 process.on('unhandledRejection', (e) => {
