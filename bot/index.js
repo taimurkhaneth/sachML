@@ -239,6 +239,14 @@ async function send(chatId, content, options = {}) {
   return sent;
 }
 
+let imagesBroken = false;
+
+// Text version of the chart: 10 squares, red share = chance of fake.
+function textGauge(score) {
+  const red = Math.round(score * 10);
+  return `Real ${100 - Math.round(score * 100)}%  ${'🟩'.repeat(10 - red)}${'🟥'.repeat(red)}  Fake ${Math.round(score * 100)}%`;
+}
+
 // Run one news check and send the two replies.
 function runCheck(chatId, text, quoted) {
   queue = queue.then(async () => {
@@ -250,8 +258,20 @@ function runCheck(chatId, text, quoted) {
       const quote = qid ? { quotedMessageId: qid } : {};
 
       if (r.status === 'ok') {
-        const media = new MessageMedia('image/png', r.chart_png, 'sach-check.png');
-        await send(chatId, media, { caption: r.model_message, ...quote });   // 1) model verdict
+        // 1) model verdict: chart image with caption; if images fail, the same verdict as text
+        let imageSent = false;
+        if (!imagesBroken) {
+          try {
+            const media = new MessageMedia('image/png', r.chart_png, 'sach-check.png');
+            await send(chatId, media, { caption: r.model_message, ...quote });
+            imageSent = true;
+          } catch (e) {
+            imagesBroken = true;                       // don't keep trying for every message
+            setTimeout(() => { imagesBroken = false; }, 30 * 60 * 1000);
+            log.warn('Image send failed, sending the verdict as text for the next 30 min:', e.message.split('\n')[0]);
+          }
+        }
+        if (!imageSent) await send(chatId, textGauge(r.fake_score) + '\n\n' + r.model_message);
         await send(chatId, r.llm_message);                                   // 2) Claude's take
         log.info(`Checked for ${log.mask(chatId)}: ${r.verdict} (${Math.round(r.fake_score * 100)}% fake, ${r.source})`);
       } else {
