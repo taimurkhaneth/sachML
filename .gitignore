@@ -1,0 +1,24 @@
+# secrets
+.env
+
+# WhatsApp login session and runtime data (never commit these)
+bot/.wwebjs_auth/
+bot/.wwebjs_cache/
+bot/data/
+bot/qr.png
+bot/node_modules/
+node_modules/
+
+# Python
+api/.venv/
+.venv/
+__pycache__/
+*.pyc
+
+# logs
+logs/
+
+# notebooks / OS
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db

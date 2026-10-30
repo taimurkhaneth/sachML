@@ -1,0 +1,16 @@
+# Same versions as training, so the saved model and vectorizer load correctly.
+# Needs Python 3.10, 3.11 or 3.12 (TensorFlow 2.18 does not support 3.13).
+tensorflow-cpu==2.18.1
+keras==3.15.1
+numpy<2
+scikit-learn==1.5.1
+joblib
+
+# API + link reading + chart + Claude
+flask>=3.0
+waitress>=3.0
+requests>=2.31
+beautifulsoup4>=4.12
+matplotlib>=3.8
+anthropic>=0.40
+python-dotenv>=1.0

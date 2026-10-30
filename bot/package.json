@@ -1,0 +1,17 @@
+{
+  "name": "sach-check-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp bot for Sach Check, the Urdu fake news detector",
+  "main": "index.js",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "latest"
+  }
+}
